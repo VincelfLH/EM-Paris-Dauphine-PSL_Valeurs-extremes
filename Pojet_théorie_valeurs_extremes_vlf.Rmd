@@ -1,0 +1,1642 @@
+---
+title: "Évaluation portant sur la théorie des valeurs extrêmes"
+author: "Vincent Le Flem"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+
+<style>
+table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse; /* Ajoute des traits de séparation et enlève l'espacement entre les lignes */
+}
+th, td {
+  word-wrap: break-word;
+  padding: 5px; /* Réduit l'espacement autour des cellules */
+  border: 1px solid black; /* Ajoute des traits de séparation */
+}
+td:nth-child(2) {
+  text-align: left; /* Aligne les valeurs de la deuxième colonne vers la gauche */
+}
+</style>
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  comment = NA,
+  echo = FALSE,
+  warning = FALSE,
+  fig.width = 11,
+  fontsize = 12)
+
+library(extRemes)
+library(readr)
+library(dplyr)
+library(lubridate)
+library(ggplot2)
+library(plotly)
+library(gridExtra)
+library(reshape2)
+library(evd)
+library(evir)
+library(fitdistrplus)
+library(moments)
+library(e1071)
+library(zoo)
+library(ismev)
+library(knitr)
+```
+
+
+
+
+<!--
+Ébauche initiale de l'étude de la variable "MxT" du jeu de données FCwx
+-->
+
+```{r, include=FALSE}
+
+data(FCwx)
+
+str(FCwx)
+
+# tracé de la température par mois 
+plot(FCwx$Mn, FCwx$MxT, main="Température par mois", xlab="Mois", ylab="température (degré Fahrenheit)",
+     xaxt='n')
+axis(1, at=1:12, labels=c("Jan", "Fev", "Mars", "Avril", "Mai", "Juin", "Juil", "Aou", "Sept", "Oct", "Nov", "Dec"))
+
+summary(FCwx$MxT)
+```
+
+
+
+```{r, include=FALSE}
+
+# création du jeu de données MxT avec une séquence de dates
+températures_extrêmes <- data.frame(time = seq(as.Date("1900-01-01"), by = "days", length.out = nrow(FCwx)), températures_extrêmes = FCwx$MxT)
+
+# ajout de la colonne Year extraite de la colonne time
+températures_extrêmes <- températures_extrêmes %>%
+  mutate(year = as.integer(format(time, "%Y")))%>%
+  rename(date = time, année = year)
+
+# vérification des premières lignes 
+head(températures_extrêmes)
+
+# vérification de la présence de valeurs manquantes
+summary(températures_extrêmes)
+colSums(is.na(températures_extrêmes))
+
+# application de la fonction blockmaxxer au jeu de données MxT
+max_annuel_température <- blockmaxxer(températures_extrêmes, blocks = températures_extrêmes$année, which = "températures_extrêmes")
+
+# vérification des résultats
+head(max_annuel_température)
+```
+
+
+```{r, include=FALSE}
+emplot(FCwx$MxT)
+```
+
+
+```{r, include=FALSE}
+
+températures_élevées <- FCwx$MxT
+
+# histogramme avec moyenne et médiane
+hist(températures_élevées, breaks = 30, main = "Histogramme des températures maximales", 
+     xlab = "Température maximale", col = "lightblue", freq = FALSE)
+abline(v = mean(températures_élevées), col = "red", lwd = 2)  # Ligne pour la moyenne
+abline(v = median(températures_élevées), col = "blue", lwd = 2)  # Ligne pour la médiane
+legend("topright", legend = c("Moyenne", "Médiane"), col = c("red", "blue"), lwd = 2)
+
+# calcul de l'asymétrie et de l'aplatissement
+library(moments)
+skewness_val <- skewness(températures_élevées)
+kurtosis_val <- kurtosis(températures_élevées) - 3  # Soustraire 3 pour obtenir l'excès de kurtosis
+
+# affichage des valeurs
+print(paste("Asymétrie (skewness) :", round(skewness_val, 3)))
+print(paste("Aplatissement (kurtosis) :", round(kurtosis_val, 3)))
+
+# QQ-Plot pour évaluer la loi normale
+qqnorm(températures_élevées, main = "QQ-Plot pour la loi normale")
+qqline(températures_élevées, col = "red")
+
+# ajustement à la loi normale
+ajustement_normal <- fitdist(températures_élevées, distr = "norm")
+summary(ajustement_normal)
+print(ajustement_normal$estimate)
+plot(ajustement_normal)
+
+
+# ajustement à la loi de Gumbel
+gumbel_cdf <- function(x, mu, beta) {
+  exp(-exp(-(x - mu) / beta))
+}
+
+# estimation des paramètres pour la loi de Gumbel
+mu <- mean(températures_élevées)
+beta <- sd(températures_élevées) * sqrt(6) / pi
+
+# calcul de la CDF théorique de Gumbel
+sorted_data <- sort(températures_élevées)
+cdf_theoretical_gumbel <- gumbel_cdf(sorted_data, mu, beta)
+
+# estimation de l'ajustement à la loi de Weibull
+shape_weibull <- (mean(températures_élevées) / sd(températures_élevées))^2
+scale_weibull <- mean(températures_élevées) / shape_weibull
+
+# fonction CDF de Weibull
+weibull_cdf <- function(x, shape, scale) {
+  pweibull(x, shape = shape, scale = scale)
+}
+
+# calcul de la CDF théorique de Weibull
+cdf_theoretical_weibull <- weibull_cdf(sorted_data, shape_weibull, scale_weibull)
+
+# estimation de l' ajustement à la loi de Fréchet 
+shape_frechet <- 1.2
+scale_frechet <- sd(températures_élevées) 
+loc_frechet <- min(températures_élevées)   
+
+# fonction CDF de Fréchet
+frechet_cdf <- function(x, loc, scale, shape) {
+  pfrechet(x, loc = loc, scale = scale, shape = shape)
+}
+
+# calcul de la CDF théorique de Fréchet
+cdf_theoretical_frechet <- frechet_cdf(sorted_data, loc_frechet, scale_frechet, shape_frechet)
+
+# création du graphique
+cdf_empirique <- ecdf(températures_élevées)
+plot(cdf_empirique, verticals = TRUE, do.points = FALSE, col = "blue", lwd = 2,
+     ylab = "CDF", xlab = "Température Maximale", main = "Comparaison des CDF Empiriques et Théoriques")
+
+# ajout des CDF théoriques des lois
+lines(sorted_data, cdf_theoretical_gumbel, col = "red", lwd = 2)
+lines(sorted_data, cdf_theoretical_weibull, col = "green", lwd = 2)
+lines(sorted_data, cdf_theoretical_frechet, col = "orange", lwd = 2)
+
+# Ajout de la CDF théorique de la loi normale
+norm_cdf <- pnorm(sorted_data, mean = ajustement_normal$estimate["mean"], sd = ajustement_normal$estimate["sd"])
+lines(sorted_data, norm_cdf, col = "purple", lwd = 2)
+
+# ajout d'une légende
+legend("bottomright", legend = c("Données (CDF empirique)", "Gumbel (théorique)", "Weibull (théorique)", 
+                                  "Fréchet (théorique)", "Normal (théorique)"),
+       col = c("blue", "red", "green", "orange", "purple"), lwd = 2)
+```
+
+
+
+
+
+
+
+
+Le présent projet propose l'étude de trois jeux de données distincts, ayant pour objectif d'analyser le comportement de variables appartenant à des domaines d'attraction de lois différentes, et de retranscrire une plus grande diversité des notions abordées en cours. L'exploration de ces jeux de données espère ainsi illustrer de manière fidèle les principes théoriques et techniques présentés en cours, ainsi que l'étendue des difficultés et des points de vigilance rencontrés dans ce type d'analyse.
+
+
+
+
+#### I. Étude portant sur la prévision de chute de neige extrêmes à Fort Collins, Colorado
+#### I.a. Étude préliminaire du jeu de donnée et de la variable étudiée
+
+Fort Collins est une ville située dans le nord de l'État du Colorado. 
+
+Le Colorado est de plus en plus touché par des périodes de sécheresse intense. Ces épisodes de sécheresse ont un impact significatif sur les ressources en eau de la région, affectant particulièrement le niveau des cours d'eau et par voie de conséquence le fleuve Colorado, dont le débit a diminué de manière drastique ces dernières années.
+
+Dans le cadre de l'étude des effets de la sécheresse, il a été initialement envisagé de s'intéresser aux températures maximales. Cependant, les analyses préliminaires montrent que les températures maximales de Fort Collins varient peu vers des extrêmes qui se détachent notablement des autres valeurs, comme le soulignent, notamment, l'histogramme et le graphique des températures maximales annuelles présentés ci-dessous.
+
+
+```{r examen préalable du jeu de données}
+
+data(FCwx)
+
+# résumés statistiques des variables MxT et Snow
+cat("Résumé statistique de la variable MxT : \n")
+print(summary(FCwx$MxT))
+
+cat("\nRésumé statistique de la variable Snow : \n")
+print(summary(FCwx$Snow))
+
+
+
+# histogrammes 
+
+## calcul de la moyenne et de la médiane de MxT
+moyenne_MxT <- mean(FCwx$MxT, na.rm = TRUE)
+médiane_MxT <- median(FCwx$MxT, na.rm = TRUE)
+## histogramme de MxT 
+histogramme_MxT <- ggplot(FCwx, aes(x = MxT)) +
+  geom_histogram(binwidth = 5, fill = "burlywood", color = "black") +
+  geom_vline(aes(xintercept = moyenne_MxT), color = "blue", linetype = "dashed", size = 1) +
+  geom_vline(aes(xintercept = médiane_MxT), color = "red", linetype = "dashed", size = 1) +
+  labs(title = "Histogramme des valeurs de la variable \"MxT\"",
+       x = "MxT",
+       y = "Fréquence") +
+  theme_classic() +
+  theme(
+    plot.title = element_text(hjust = 0.5, color = "navy", size = 12),
+    axis.title.x = element_text(color = "navy", size = 10),
+    axis.title.y = element_text(color = "navy", size = 10)
+  ) +
+  annotate("text", x = moyenne_MxT, y = Inf, label = "Moyenne", vjust = 1.5, hjust = -0.1, color = "blue", size = 3) +
+  annotate("text", x = médiane_MxT, y = Inf, label = "Médiane", vjust = 1.5, hjust = -0.1, color = "red", size = 3)
+
+
+## calcul de la moyenne et la médiane de Snow
+moyenne_Snow <- mean(FCwx$Snow, na.rm = TRUE)
+médiane_Snow <- median(FCwx$Snow, na.rm = TRUE)
+## histogramme de Snow
+histogramme_Snow <- ggplot(FCwx, aes(x = Snow)) +
+  geom_histogram(binwidth = 10, fill = "burlywood", color = "black") +
+  geom_vline(aes(xintercept = moyenne_Snow), color = "blue", linetype = "dashed", size = 1) +
+  geom_vline(aes(xintercept = médiane_Snow), color = "red", linetype = "dashed", size = 1) +
+  labs(title = "Histogramme des valeurs de la variable \"Snow\"",
+       x = "Snow",
+       y = "Fréquence") +
+  theme_classic() +
+  theme(
+    plot.title = element_text(hjust = 0.5, color = "navy", size = 12),
+    axis.title.x = element_text(color = "navy", size = 10),
+    axis.title.y = element_text(color = "navy", size = 10)
+  ) +
+  annotate("text", x = moyenne_Snow, y = Inf, label = "Moyenne", vjust = 1.5, hjust = -0.1, color = "blue", size = 3) +
+  annotate("text", x = médiane_Snow, y = Inf, label = "Médiane", vjust = 1.5, hjust = -0.1, color = "red", size = 3)
+
+
+
+# mise en forme des données pour ggplot
+FCwx_long <- data.frame(
+  variable = rep(c("MxT", "Snow"), each = nrow(FCwx)),
+  value = c(FCwx$MxT, FCwx$Snow)
+)
+
+# boxplot de MxT et Snow
+diagramme_boîte_MxT_Snow <- ggplot(FCwx_long, aes(x = variable, y = value, fill = variable)) +
+  geom_boxplot() +
+  labs(title = "Diagrammes en boîte des variables \"MxT\" et \"Snow\"",
+       x = "Variable",
+       y = "Valeur") +
+  theme_classic() +
+  theme(
+    plot.title = element_text(hjust = 0.5, color = "navy", size = 12),
+    axis.title.x = element_text(color = "navy", size = 10),
+    axis.title.y = element_text(color = "navy", size = 10)
+  )
+
+# graphique du mawimum annuel des températures
+maximum_annuel_températures <- ggplot(températures_extrêmes, aes(x = année, y = températures_extrêmes)) +
+  geom_point(color = "skyblue2", alpha = 0.6) +
+  geom_point(data = max_annuel_température, aes(x = année, y = températures_extrêmes), color = "firebrick2") +
+  labs(title = "Valeur maximale de température journalière pour chaque année",
+       x = "Années",
+       y = "Température maximale") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, color = "Navy", size = 12),
+    axis.title.x = element_text(color = "Navy", size = 10),
+    axis.title.y = element_text(color = "Navy", size = 10)
+  )
+
+grid.arrange(histogramme_MxT, histogramme_Snow, diagramme_boîte_MxT_Snow, maximum_annuel_températures, nrow = 2, ncol = 2)
+```
+
+
+Nous observons, entre autres, que la distribution des températures maximales s'apparente de manière assez notable à celle d'une loi normale, avec des valeurs davantage réparties autour de la moyenne et des queues de distribution assez faibles. La distribution montre également un centre penchant davantage vers des températures plutôt élevées. Le graphique des maximaux annuels indique des constats similaires. 
+
+En revanche, la distribution da la hauteur journalière des chutes de neige montre des dissemblances flagrantes entre le maximum, le minimum, le 3e quartile et la moyenne, avec des écarts de valeur pouvant être très importants. 
+
+En conséquence, bien que l'étude des précipitations ou des températures maximales aurait également été intéressante, il a été jugé plus pertinent pour cette étude de se concentrer sur le volume des chutes de neige.
+
+En effet, Fort Collins est régulièrement confrontée à des chutes de neige importantes qui peuvent paralyser la ville. Par exemple, en mars 2003, une tempête de neige a déversé près de 80 cm de neige dans certaines régions du Colorado, causant des fermetures d'écoles, des pannes d'électricité et des interruptions des transports. Plus récemment, en 2021, une autre tempête a également entraîné des accumulations de neige significatives, affectant la vie quotidienne des habitants et les infrastructures locales (cf. références documentaires n° 1, 2, 3 et 4)
+
+De plus, ces fortes chutes de neige sont cruciales pour la région car elles contribuent de manière significative aux réserves en eau du fleuve Colorado (cf. référence documentaire n° 5). Comprendre la fréquence des épisodes de neige extrême pourrait également aider à évaluer, en partie, la reconstitution des réserves en eau. 
+
+Le résumé statistique de le variable "Snow" montre toutefois la présence de 730 valeurs manquantes.
+
+
+```{r mise en forme du jeu de données FCwx et vérification des valeurs manquantes, include=FALSE}
+
+data(FCwx)
+
+# création d'une colonne date à partir des colonnes Year, Mn, et Dy
+FCwx$date <- as.Date(with(FCwx, paste(Year, Mn, Dy, sep = "-")), format = "%Y-%m-%d")
+
+# identification des indices des valeurs manquantes pour la variable "Snow"
+indices_na <- which(is.na(FCwx$Snow))
+
+# extraction des valeurs manquantes
+dates_na <- FCwx$date[indices_na]
+
+print(dates_na)
+```
+
+
+```{r visualisation des 10 premières et 10 dernières valeurs manquantes}
+
+# extraction des 10 premières dates
+premières_dates <- head(dates_na, 10)
+
+# extraction des 10 dernières dates
+dernières_dates <- tail(dates_na, 10)
+
+# visualisation des résultats
+print("Les 10 premières dates des valeurs manquantes sont :")
+print(premières_dates)
+print("Les 10 dernières dates des valeurs manquantes sont :")
+print(dernières_dates)
+```
+
+
+Le détail de ces valeurs manquantes indique que les relevés ne renseignent aucune donnée pour les années 1998 et 1999. 
+
+Dans la mesure où :
+
+- aucune autre valeur n'est manquante pour les autres années, cela ne nécessite aucun traitement particulier qui pourrait risquer de biaiser quelque peu les analyses ;
+- le jeu de données renseigne les mesures journalières pour 100 années, 98 années restent exploitables et donc un minimum de 98 maximum à étudier également, ce qui reste satisfaisant pour effectuer une analyse statistique des valeurs extrêmes. 
+    
+Il est ainsi proposé d'exclure les données manquantes et d'étudier la variable "Snow" dans la suite de cette première section.
+
+
+```{r reconfiguration du jeu de données FCwx$Snow pour retirer les données manquantes}
+
+chutes_neiges_sans_NA <- na.omit(FCwx$Snow)
+
+# vérification des données manquantes dans le jeu de données nettoyé
+nombre_NA_sans_NA <- sum(is.na(chutes_neiges_sans_NA))
+cat("Nombre de valeurs manquantes dans chutes_neiges_sans_NA :", nombre_NA_sans_NA, "\n")
+
+# vérification du type de données dans le jeu de données sans NA
+classe_observations <- class(chutes_neiges_sans_NA)
+cat("Classe des observations de chutes_neiges_sans_NA :", classe_observations, "\n")
+
+# vérification de la longueur des données
+nombre_observation <- length(chutes_neiges_sans_NA)
+cat("Nombre d'observations contenues dans chutes_neiges_sans_NA :", nombre_observation, "\n")
+```
+
+
+```{r fonction de répartition, include=FALSE}
+
+# contraindre la fonction emplot à ne conserver que les valeurs >= 1 pour palier les mesures apparaissant à 1.e-16
+chutes_neiges_filtrées <- chutes_neiges_sans_NA[chutes_neiges_sans_NA >= 0]
+
+# Vérifier la longueur des données filtrées
+cat("Nombre d'observations après filtration :", length(chutes_neiges_filtrées), "\n")
+
+# Utiliser emplot avec les données filtrées
+emplot(chutes_neiges_filtrées)
+```
+
+
+En première approche, il est proposé d'effectuer une analyse préliminaire plus détaillée de la distribution de la variable "Snow" afin de tenter d'identifier plus précisément ses caractéristiques.
+
+
+```{r observation préliminaire de la distribution}
+
+# I. Calcul de l'asymétrie et de l'aplatissement
+valeur_skewness <- skewness(chutes_neiges_sans_NA)
+valeur_kurtosis <- kurtosis(chutes_neiges_sans_NA) - 3
+
+print(paste("Asymétrie (skewness) :", round(valeur_skewness, 3)))
+print(paste("Aplatissement (kurtosis) :", round(valeur_kurtosis, 3)))
+
+# II. Ajustement à la loi de Gumbel
+cdf_gumbel <- function(x, mu, beta) {
+  exp(-exp(-(x - mu) / beta))
+}
+
+# Estimation des paramètres pour la loi de Gumbel
+mu <- mean(chutes_neiges_sans_NA)
+bêta <- sd(chutes_neiges_sans_NA) * sqrt(6) / pi
+
+# Calcul de la CDF théorique de Gumbel
+données_triées <- sort(chutes_neiges_sans_NA)
+cdf_gumbel_théorique <- cdf_gumbel(données_triées, mu, bêta)
+
+# III. Estimation de l'ajustement à la loi de Weibull
+paramètre_forme_weibull <- (mean(chutes_neiges_sans_NA) / sd(chutes_neiges_sans_NA))^2
+paramètre_échelle_weibull <- mean(chutes_neiges_sans_NA) / paramètre_forme_weibull
+
+cdf_weibull <- function(x, shape, scale) {
+  pweibull(x, shape = shape, scale = scale)
+}
+
+cdf_weibull_théorique <- cdf_weibull(données_triées, paramètre_forme_weibull, paramètre_échelle_weibull)
+
+# IV. Estimation de l'ajustement à la loi de Fréchet
+paramètre_forme_fréchet <- 1.2
+paramètre_échelle_fréchet <- sd(chutes_neiges_sans_NA)  
+localisation_fréchet <- min(chutes_neiges_sans_NA)
+
+cdf_fréchet <- function(x, loc, scale, shape) {
+  pfrechet(x, loc = loc, scale = scale, shape = shape)
+}
+
+cdf_fréchet_théorique <- cdf_fréchet(données_triées, localisation_fréchet, paramètre_échelle_fréchet, paramètre_forme_fréchet)
+
+# V. Estimation de l'ajustement à la loi exponentielle
+lambda <- 1 / mean(chutes_neiges_sans_NA)
+
+pdf_exponentielle <- function(x, lambda) {
+  lambda * exp(-lambda * x)
+}
+
+cdf_exponentielle <- function(x, lambda) {
+  1 - exp(-lambda * x)
+}
+
+valeurs_x <- seq(0, max(chutes_neiges_sans_NA), length.out = 100)
+valeurs_y <- pdf_exponentielle(valeurs_x, lambda) * length(chutes_neiges_sans_NA) * 1.5
+pdf_données <- data.frame(x = valeurs_x, y = valeurs_y)
+
+moyenne_Snow <- mean(chutes_neiges_sans_NA)
+médiane_Snow <- median(chutes_neiges_sans_NA)
+
+histogramme_Snow <- ggplot() +
+  geom_histogram(aes(x = chutes_neiges_sans_NA, y = ..count..), binwidth = 10, fill = "burlywood", color = "black", alpha = 0.6) +
+  geom_line(data = pdf_données, aes(x = x, y = y), color = "blue", size = 1) +
+  geom_vline(aes(xintercept = moyenne_Snow), color = "blue", linetype = "dashed", size = 1) +
+  geom_vline(aes(xintercept = médiane_Snow), color = "red", linetype = "dashed", size = 1) +
+  labs(title = "Histogramme des valeurs de la variable \"Snow\" avec ajustement de la loi exponentielle",
+       x = "Snow",
+       y = "Fréquence") +
+  theme_classic() +
+  theme(
+    plot.title = element_text(hjust = 0.5, color = "navy", size = 12),
+    axis.title.x = element_text(color = "navy", size = 10),
+    axis.title.y = element_text(color = "navy", size = 10)
+  ) +
+  annotate("text", x = moyenne_Snow, y = Inf, label = "Moyenne", vjust = 1.5, hjust = -0.1, color = "blue", size = 3) +
+  annotate("text", x = médiane_Snow, y = Inf, label = "Médiane", vjust = 1.5, hjust = -0.1, color = "red", size = 3)
+print(histogramme_Snow)
+
+# Q-Q plot pour la loi exponentielle
+qqplot(qexp(ppoints(length(chutes_neiges_sans_NA)), rate = lambda), chutes_neiges_sans_NA,
+       xlab = "Quantiles théoriques (exponentielle)", ylab = "Quantiles observés", 
+       main = "Q-Q Plot pour la Loi Exponentielle")
+abline(0, 1, col = "red", lwd = 2)
+
+# Test de Kolmogorov-Smirnov pour la distribution exponentielle
+ks_test_exponentielle <- ks.test(chutes_neiges_sans_NA, "pexp", rate = lambda)
+print(ks_test_exponentielle)
+
+# Calcul de la CDF théorique de l'exponentielle
+cdf_exponentielle_théorique <- cdf_exponentielle(données_triées, lambda)
+
+# VI. Représentation graphique de la CDF empirique et des CDF théoriques
+cdf_empirique <- ecdf(données_triées)
+
+df <- data.frame(
+  x = données_triées,
+  CDF_empirique = cdf_empirique(données_triées),
+  CDF_gumbel = cdf_gumbel_théorique,
+  CDF_weibull = cdf_weibull_théorique,
+  CDF_fréchet = cdf_fréchet_théorique,
+  CDF_exponentielle = cdf_exponentielle_théorique
+)
+
+ggplot(df, aes(x = x)) +
+  stat_ecdf(aes(y = CDF_empirique), geom = "step", color = "cyan3", size = 1.2) +
+  geom_line(aes(y = CDF_gumbel), color = "firebrick2", size = 1.2) +
+  geom_line(aes(y = CDF_weibull), color = "seagreen2", size = 1.2) +
+  geom_line(aes(y = CDF_fréchet), color = "orange", size = 1.2) +
+  geom_line(aes(y = CDF_exponentielle), color = "blueviolet", size = 1.2) +
+  labs(title = "Comparaison des CDF empiriques et théoriques",
+       x = "Hauteur de la chute de neige (en pouces)",
+       y = "CDF") +
+  theme_classic() +
+  theme(
+    plot.title = element_text(hjust = 0.5, color = "navy", size = 14),
+    axis.title.x = element_text(color = "navy", size = 12),
+    axis.title.y = element_text(color = "navy", size = 12)
+  ) +
+  scale_y_continuous(limits = c(0, 1)) +
+  scale_x_continuous(limits = c(min(données_triées), max(données_triées))) +
+  theme(legend.position = "bottomright") +
+  scale_color_manual(values = c("cyan3", "firebrick2", "seagreen2", "orange", "blueviolet")) +
+  guides(color = guide_legend(title = NULL)) +
+  annotate("text", x = max(données_triées), y = 0.95, label = "Données (CDF empirique)", color = "cyan3", hjust = 1) +
+  annotate("text", x = max(données_triées), y = 0.9, label = "Gumbel (théorique)", color = "firebrick2", hjust = 1) +
+  annotate("text", x = max(données_triées), y = 0.85, label = "Weibull (théorique)", color = "seagreen2", hjust = 1) +
+  annotate("text", x = max(données_triées), y = 0.8, label = "Fréchet (théorique)", color = "orange", hjust = 1) +
+  annotate("text", x = max(données_triées), y = 0.75, label = "Exponentielle (théorique)", color = "blueviolet", hjust = 1)
+
+
+```
+
+
+Les valeurs d'asymétrie et de kurtosis confirment l'impression visuelles. L'asymétrie indique que la distribution de la variable "Snow" est fortement asymétrique vers la droite, ce qui implique que les données de hauteurs de chutes de neige ont une longue queue à droite. En d'autres termes, il existe des valeurs extrêmement élevées de hauteur de neige, mais la majorité des valeurs sont proches de zéro. L'aplatissement indique que la distribution est très pointue et a des queues très lourdes. Rapproché à l'asymétrie, cela signifie qu'il y a une concentration élevée des valeurs autour de la moyenne, mais aussi un intervalle allongé des valeurs élevées voire très élevées. Aussi, ce type de distribution suggère que les événements de chute de neige sont généralement faibles, mais qu'il existe des occurrences rares de chutes de neige élevées ou extrêmes.
+
+L'histogramme permet de visualiser la répartition de cette distribution et confirme ces constats. Nous observons une très forte concentration des valeurs autour de zéro, et une baisse considérable du nombre d'observations dès que les valeurs atteignent environ 20 pouces.  
+
+À première vue, l'ajustement de la distribution par une loi exponentielle n'apparaît pas aberrant lorsqu'on le compare à l'histogramme de la variable. La comparaison de la fonction de distribution cumulative (CDF) empirique et théorique semble appuyer cette observation, l'ajustement par une fonction exponentielle apparaissant globalement satisfaisant. D'ailleurs, le graphique de comparaison des CDF suggère que cet ajustement semblerait le plus adapté. Cependant, nous observons une déviation significative des points par rapport à la ligne 1-1 - correspondant à la ligne où les quantiles observés sont égaux aux quantiles théoriques -, en particulier lorsque les valeurs deviennent élevées, indiquant que la loi exponentielle ne s'ajuste pas parfaitement aux données. Or, en l'occurrence, nous souhaitons estimer une hauteur d'une chute de neige extrême pour une période de retour donnée. Le test de Kolmogorov-Smirnov donne une statistique D de 0.92909 et une p-value inférieure à 2.2e-16, rejetant l'hypothèse nulle selon laquelle les données suivent une distribution exponentielle. Ces résultats montrent sans trop d'ambiguïté que bien que la loi exponentielle puisse initialement sembler un bon modèle pour les hauteurs de neige, elle ne semble pas modéliser adéquatement la variabilité et les extrêmes présents dans les données. 
+
+La comparaison des autres CDF théoriques suggère que la loi de Gumbel semblerait être celle qui s'ajuste à celle de la variable "Snow" de manière la plus satisfaisante. Ceci semble cohérent avec le rapprochement effectué précédemment, puisque la loi exponentielle appartient au domaine d'attraction de la loi de Gumbel. Toutefois, elle semble elle aussi sous-estimer plus fortement les valeurs extrêmes car elle converge plus rapidement. Parmi les deux autres lois restantes, la loi de Fréchet semble avoir un avantage par rapport à la loi de Weibull pour l'estimation de ces valeurs, qui converge plus rapidement vers son point final. Néanmoins, aucune de ces lois ne semble se dégager sans contestation possible. 
+
+En tout état de cause, ces résultats illustrent la difficulté d'estimer une valeur extrême sur une période de retour donnée avec des modèles statistiques plus usuels et les limites de cette approche. Outre le risque d'erreur lié à l'estimation des paramètres ou à l'implémentation, ce type d'approche peut se révéler insuffisant pour modéliser correctement le comportement de la distribution pour des valeurs très élevées, voire impossible lorsque nous souhaitons effectuer une estimation pour une période de retour qui va au-delàs de la période observée. De plus, des erreurs d'estimation, même faibles, peuvent avoir des répercussions significatives lors de l'application de la loi des maximums. Ces observations confirment qu'il s'agit d'une approche périlleuse et qu'une modélisation plus rigoureuse est préférable.
+
+Compte tenu de ces constats, Il est proposé de procéder à une estimation par les modèles développés par la théorie des valeurs extrêmes.
+
+
+
+
+#### I.b. Estimation par la théorie des valeurs extrêmes
+#### I.b.1. Ajustement par la Distribution Généralisée des Valeurs Extrêmes (GEV) 
+
+Cette approche repose sur l'extraction des maximums de la variable étudiée. Plus précisément, pour analyser les valeurs extrêmes, on extrait les maximums observés dans des périodes de temps définies. Par exemple, les maximums peuvent être extraits à partir d'un découpage annuel des données observées. Ce découpage permet de capturer les variations saisonnières et interannuelles tout en conservant généralement une plus grande stabilité et représentativité des événements extrêmes.
+
+Dans ce but, une colonne de date est créée dans le jeu de données initial. Ensuite, après s'être assuré que les valeurs manquantes ont été exclues de l'analyse, les maximums annuels sont extraits du jeu de données à l'aide de la fonction "blockmaxxer" de la librairie "extRemes".
+
+
+```{r mise en forme de jeu de données initial, include=FALSE}
+
+# minimisation des perturbations dues aux différents sous-jeux de données créés
+data(FCwx)
+
+# concaténation des colonnes Year, Month, Day pour créer la colonne date
+FCwx <- FCwx %>%
+  mutate(date = ymd(paste(Year, Mn, Dy, sep = "-"))) %>%
+  dplyr::select(date, everything(), -Year, -Mn, -Dy)
+
+head(FCwx)
+```
+
+
+```{r mise en forme de jeu de données pour analyse}
+
+# création du dataframe avec une séquence de dates
+chutes_neiges_élevées <- data.frame(time = seq(as.Date("1900-01-01"), by = "days", length.out = nrow(FCwx)), chutes_neiges_extrêmes = FCwx$Snow)
+
+# ajout de la colonne Year extraite de la colonne time
+chutes_neiges_élevées <- chutes_neiges_élevées %>%
+  mutate(year = as.integer(format(time, "%Y"))) %>%
+  rename(date = time, année = year)
+
+# vérification des premières lignes après modification
+head(chutes_neiges_élevées)
+
+# vérification de la présence de valeurs manquantes
+summary(chutes_neiges_élevées)
+colSums(is.na(chutes_neiges_élevées))
+
+# suppression des valeurs manquantes
+chutes_neiges_élevées_sans_NA <- na.omit(chutes_neiges_élevées)
+
+# vérification que les valeurs manquantes sont correctemrnt supprimées
+summary(chutes_neiges_élevées_sans_NA)
+colSums(is.na(chutes_neiges_élevées_sans_NA))
+```
+
+
+```{r extraction des maximums annuels}
+
+max_annuel_chute_neige <- blockmaxxer(chutes_neiges_élevées_sans_NA, blocks = chutes_neiges_élevées_sans_NA$année, which = "chutes_neiges_extrêmes")
+
+head(max_annuel_chute_neige)
+valeurs_max_annuel <- as.numeric(rownames(max_annuel_chute_neige))
+nombre_max_annuel <- length(valeurs_max_annuel)
+cat("Nombre extrait de maximum annuel :", nombre_max_annuel, "\n")
+
+
+
+# représentation graphique
+plot(
+  chutes_neiges_élevées$année, 
+  chutes_neiges_élevées$chutes_neiges_extrêmes,
+  ylab = "",  
+  xlab = "",  
+  col = "Navy", 
+  pch = 16, 
+  main = "Valeur maximale de chute de neige journalière pour chaque année",
+  xaxt = "n",  
+  yaxt = "n"   
+)
+# ajout de l'échelle des années à l'axe des abscisses
+axis(
+  1, 
+  at = seq(min(chutes_neiges_élevées$année), max(chutes_neiges_élevées$année), by = 5),
+  labels = seq(min(chutes_neiges_élevées$année), max(chutes_neiges_élevées$année), by = 5),
+  las = 1 
+)
+# ajout de l'échelle des valeurs de neige à l'axe des ordonnées
+axis(2, at = pretty(chutes_neiges_élevées$chutes_neiges_extrêmes))
+# ajout des points des valeurs maximales annuelles
+points(max_annuel_chute_neige$année, max_annuel_chute_neige$chutes_neiges_extrêmes, col = "firebrick2", pch = 16)
+# ajout des titres 
+title(main = "Valeur maximale de chute de neige journalière pour chaque année", col.main = "Navy")
+mtext(side = 1, text = "Années", line = 2, col = "Navy")
+mtext(side = 2, text = "Volume de neige", line = 2, col = "Navy")
+```
+
+
+Le graphique des hauteurs de neige montre que la plupart des points rouges, représentant les maximums annuels, se distinguent nettement des autres valeurs mesurées, bien que certains soient inférieurs à d'autres mesures. Cette observation illustre l'impact du découpage de la période choisie, qui ne permet pas de conserver l'ensemble des mesures les plus élevées. Cependant, le 3e quartile étant de 0 et la moyenne de hauteur de neige de 1,3 pouces, nous observons également qu'aucun point rouge ne se situe en dessous de la moyenne ni des 25 % des mesures les plus élevées. Ce découpage semble donc fournir une représentativité satisfaisante des extrêmes mesurés sur la période de temps étudiée. 
+
+Nous pouvons dès lors procéder à l'ajustement de la distribution de la variable en utilisant les maximums extraits et la fonction "fevd" de la librairie extRemes. Avec 98 observations, l'ajustement devrait être satisfaisant pour les deux méthodes d'estimation employées. En particulier, la méthode du maximum de vraisemblance, qui est plus sensible aux petites tailles d'échantillon - généralement inférieures ou égales à une trentaine d'observations -, devrait être moins influencée par la taille de l'échantillon dans le cas présent. Observons les résultats.
+
+
+#### I.b.1.a Ajustement par le maximum de vraissemblance
+
+
+```{r ajustement de la distribution des chutes de neige avec la méthode MLE}
+
+ajustement_chute_neige_MLE <- fevd(max_annuel_chute_neige$chutes_neiges_extrêmes, type = "GEV", method = "MLE")
+ajustement_chute_neige_MLE
+
+plot(ajustement_chute_neige_MLE)
+
+# intervalles de confiance pour les paramètres du modèle ajusté
+ci(ajustement_chute_neige_MLE, type = "parameter")
+```
+
+
+Les paramètres estimés "localisation", "scale" et "shape" représentent respectivement la position centrale de la distribution, l'échelle - soit une estimation de l'influence de la dispersion des données -, et la forme - qui définit la queue de la distribution. Le paramètre de localisation indique que les valeurs maximales de neige tendent à se situer autour de 70 pouces. Le paramètre d'échelle, de 29,9 pouces, montre la dispersion autour de cette valeur centrale. Pour mémoire, le paramètre de forme (le coefficient gamma) renseigne directement sur le domaine de convergence de la distribution étudiée. Autrement dit, il permet d'identifier vers quelle loi la distribution converge : Weibull, lorsqu'il est négatif ; Gumbel, lorsqu'il est égal à zéro ; Fréchet, lorsqu'il est supérieur à zéro. Il est ici négatif (-0.029), ce qui présume que la distribution s'apparente à une distribution de Weibull et suggèrerait un point terminal. 
+Il est cependant très proche de zéro ; d'ailleurs inclus dans l'intervalle de confiance à 95%. Ce résultat indique que la distribution pourrait également être proche d'une distribution de Gumbel, suggérant que les valeurs extrêmes suivent une distribution avec une queue de type exponentielle. 
+
+Les erreurs standards associées aux paramètres apparaissent relativement faibles et supposent une précision satisfaisante des estimations, avec une incertitude légèrement plus grande pour les paramètres de localisation et d'échelles. 
+
+Concernant les graphiques, le premier graphique en haut à gauche est un graphique de type Quantile-Quantile (QQ) qui compare les quantiles empiriques avec ceux du modèle. Un bon ajustement est illustré par des points proches de la ligne diagonale 1-1. Nous observons que les points ajustés se situent principalement sur cette ligne, en particulier pour les valeurs extrêmes - ce que nous cherchons précisément à modéliser -, indiquant que le modèle GEV s'ajuste bien aux données observées.
+Le deuxième graphique en haut à droite compare les quantiles des données simulées par le modèle aux quantiles empiriques. La ligne pointillée orange représente la ligne idéale 1-1, la ligne noire montre la régression des données simulées, et les bandes grises délimitent les intervalles de confiance à 95 %. Les points proches de la ligne 1-1 et à l'intérieur des bandes de confiance montrent que le modèle semble reproduire fidèlement les quantiles des données empiriques, ce qui confirme l'impression de premier graphique.
+Le graphique en bas à gauche illustre la comparaison entre la densité empirique et la densité non paramétrique modélisée. La courbe noire représente la densité empirique des données, tandis que la courbe pointillée bleue montre la densité prévue par le modèle. Bien que la densité estimée ne retranscrive pas toutes les subtilités de la distribution empirique, les deux courbes se superposent de manière satisfaisante, en particulier pour les valeurs élevées, ce qui suggère que le modèle GEV modélise correctement la distribution des valeurs extrêmes de chute de neige.
+Enfin, le graphique en bas à droite présente le niveau de retour en fonction de la période de retour. Les cercles noirs représentent les observations empiriques, tandis que la ligne noire indique les prédictions du modèle. Les intervalles de confiance sont représentés par des bandes grises. Les observations empiriques suivent de près les prédictions du modèle et sont toutes situées à l'intérieur des intervalles de confiance, supposant ainsi la fiabilité de l'ajustement du modèle GEV pour estimer les niveaux de retour pour différentes périodes.
+
+Ces résultats suggèrent que l'ajustement GEV par la méthode du maximum de vraisemblance constitue un modèle approprié pour estimer les chutes de neige extrêmes. Toutefois, l'incertitude sur la valeur du coefficient gamma incite à étudier un ajustement par la méthode du maximum de vraisemblance mais avec un type "Gumbel" dans la fonction "fevd".
+
+
+```{r ajustement de la distribution des chutes de neige avec la loi de Gumbel}
+
+ajustement_chute_neige_MLE_Gumbel <- fevd(max_annuel_chute_neige$chutes_neiges_extrêmes, type = "Gumbel", method = "MLE")
+ajustement_chute_neige_MLE_Gumbel
+
+plot(ajustement_chute_neige_MLE_Gumbel)
+
+# intervalles de confiance pour les paramètres du modèle ajusté
+ci(ajustement_chute_neige_MLE_Gumbel, type = "parameter")
+```
+
+
+Les paramètres estimés sont très similaires à ceux obtenus avec la distribution GEV. La valeur de log-vraisemblance est très légèrement plus élevée, indiquant une légère diminution de la qualité de l'ajustement bien que les deux valeurs soient très proches. 
+
+En revanche, les erreurs standards et les critères AIC et BIC sont légèrement inférieurs, suggérant un modèle plus parcimonieux et légèrement plus prédictif. De même, la comparaison des différents graphiques montre que l'ajustement, en particulier des valeurs extrêmes, semble plus satisfaisante compte tenu de la distribution des points plus proches de la ligne 1-1. Les intervalles de confiance sont également plus resserrés sur le graphique présentant les niveaux de retour. 
+
+Ces constats favorisent légèrement le modèle de Gumbel, suggérant qu'il pourrait offrir un meilleur compromis entre ajustement et complexité du modèle. L'ajustement avec une loi de Gumbel semble fournir une estimation tout aussi fiable avec une complexité légèrement moindre, supposant que la distribution de Gumbel est une alternative valable pour modéliser les valeurs extrêmes de chute de neige.
+
+
+#### I.b.1.b. Ajustement par la méthode des L-moments
+
+
+```{r ajustement de la distribution des chutes de neige avec la méthode des L-moments}
+
+ajustement_chute_neige_moments <- fevd(max_annuel_chute_neige$chutes_neiges_extrêmes, type = "GEV", method = "Lmoments")
+ajustement_chute_neige_moments
+
+plot(ajustement_chute_neige_moments)
+
+# intervalles de confiance pour les paramètres du modèle ajusté
+ci(ajustement_chute_neige_moments, type = "parameter")
+```
+
+
+Les paramètres estimés et les résultats graphiques sont très similaires à ceux obtenus avec les deux ajustements précédents. L'ajustement par la méthode des L-moments estime également que la distribution s'apparente à une loi de Weibull, bien qu'un coefficient de zéro soit aussi inclus dans l'intervalle de confiance. 
+Les intervalles de confiance du graphique présentant les niveaux de retour semblent légèrement plus resserrés que ceux obtenus avec l'ajustement GEV par maximum de vraisemblance, sans toutefois qu'il n'y ait de différence flagrante. Cet ajustement, tout comme celui obtenu avec la méthode du maximum de vraisemblance, semble sous-estimer un peu plus fortement les valeurs associées à des périodes de retour de plus de 40 ans qu'avec l'ajustement par un loi de Gumbel.
+
+Les résultats obtenus avec les trois modèles sont globalement similaires, avec des paramètres de localisation et d'échelle très proches et des résultats graphiques qui montrent une bonne correspondance avec les données empiriques. Le modèle ajusté avec une loi de Gumbel semble offrir un ajustement légèrement meilleur selon les critères AIC et BIC. De même, les intervalles de confiance plus serrés suggèrent une meilleure précision des prédictions de ce modèle. 
+
+Néanmoins, les différences obtenues n'apparaissent pas incontestables. Ainsi, il pourrait être intéressant de procéder à des analyses complémentaires, notamment lors d'un travail conjoint avec des experts du phénomène étudié. En tout état de cause, sur la base des données étudiées, ces trois méthodes d'estimation semblent constituer des alternatives valables pour la modélisation des valeurs extrêmes de chute de neige.
+
+
+
+
+#### I.c Ajustement par la Distribution de Pareto Généralisée (GPD)
+#### I.c.1. Choix du seuil
+
+```{r graphiques de la vie résiduelle moyenne et de la plage de seuil}
+
+mrlplot(chutes_neiges_sans_NA)
+
+threshrange.plot(chutes_neiges_sans_NA, r = c(20,65), nint = 10)
+```
+
+```{r vérification du nombre de donnée conservées après application du seuil de hauteur de neige sélectionné}
+
+# seuil sélectionné
+seuil <- 35
+
+# filtrage des données pour obtenir celles qui dépassent le seuil
+données_après_seuil <- chutes_neiges_élevées_sans_NA[chutes_neiges_élevées_sans_NA$chutes_neiges_extrêmes > seuil, ]
+
+# nombre d'observations après filtrage
+nombre_données_après_seuil <- nrow(données_après_seuil)
+
+# Afficher le nombre d'observations restantes
+print(paste("Nombre d'observations après application du seuil fixé à", seuil, "pouces :", nombre_données_après_seuil))
+```
+
+
+Le graphique de la vie résiduelle moyenne (Mean Residual Life Plot) montre la moyenne des excès en fonction des différents seuils. Dans le cas étudié, il semble que la courbe commence à ralentir sa croissance de manière plus marquée à partir d'un seuil d'environ 25, avant de donner l'impression de se stabiliser et de commencer à décroître à partir d'un seuil d'environ 60. Cela semble indiquer qu'un seuil compris approximativement entre 30 et 55 serait approprié pour modéliser les valeurs extrêmes.
+
+Afin de s'en assurer, analysons un second ensemble de graphiques qui présente les estimations des paramètres d'échelle (reparameterized scale) et de forme (shape) pour différents seuils. Ces graphiques montrent que :
+
+- Concernant le paramètre d'échelle, les estimations apparaissent relativement stables jusqu'à un seuil d'une valeur de 30, avant de présenter une première fluctuation significative aux alentours d'un seuil de 35. Nous observons également que les intervalles de confiance commencent à s'élargir de manière notable et sans discontinuer à partir de ce seuil. 
+- Les estimations du paramètre de forme présentent la même forme d’évolution, ce qui renforce les observations émises lors de l'analyse du paramètre d'échelle.
+
+Les analyses des graphiques de la vie résiduelle moyenne et de la plage de seuil suggèrent que le choix d'un seuil fixé à 35 pouces est approprié pour modéliser les valeurs extrêmes des chutes de neige. Ce seuil est également cohérent avec les observations relevées lors de l'analyse préliminaire de la variable, qui montraient une chute considérable du nombre d'observations dès un seuil de 20 pouces.
+
+L'application de ce seuil permet de conserver 384 observations sur 35 794. Ce nombre apparaît cohérent car il conserve près de quatre fois plus d'observations qu'avec l'extraction des maximums annuels, ce qui est l'un des buts recherchés. De plus, ce seuil conserve peu d'observations d'origine ; à l'inverse, en conserver trop représenterait un risque de ne plus modéliser les valeurs extrêmes.
+
+
+#### I.c.2. Ajustement par le maximum de vraissemblance
+
+
+```{r ajustement de la distribution GPD avec MLE}
+
+ajustement_chute_neige_GPD_MLE <- fevd(
+  chutes_neiges_sans_NA, 
+  threshold = 35,  
+  type = "GP", 
+  method = "MLE", 
+  time.units = "days"
+)
+ajustement_chute_neige_GPD_MLE
+
+plot(ajustement_chute_neige_GPD_MLE)
+
+# intervalles de confiance pour les paramètres du modèle ajusté
+ci(ajustement_chute_neige_GPD_MLE, type = "parameter")
+```
+
+
+```{r ajustement de la distribution GPD avec la loi de Gumbel}
+
+ajustement_chute_neige_GPD_MLE_gumbel <- fevd(
+  chutes_neiges_sans_NA, 
+  threshold = 35,  
+  type = "Exponential", 
+  method = "MLE", 
+  time.units = "days"
+)
+ajustement_chute_neige_GPD_MLE_gumbel
+
+plot(ajustement_chute_neige_GPD_MLE_gumbel)
+
+# intervalles de confiance pour les paramètres du modèle ajusté
+ci(ajustement_chute_neige_GPD_MLE_gumbel, type = "parameter")
+```
+
+
+#### I.c.3. Ajustement par la méthode des L-moments
+
+
+```{r ajustement de la distribution GPD avec la méthode des L-moments} 
+
+ajustement_chute_neige_GPD_moments <- fevd(
+  chutes_neiges_sans_NA, 
+  threshold = 35,  
+  type = "GP", 
+  method = "Lmoments", 
+  time.units = "days"
+)
+print(ajustement_chute_neige_GPD_moments)
+
+
+plot(ajustement_chute_neige_GPD_moments)
+
+# intervalles de confiance pour les paramètres
+ci(ajustement_chute_neige_GPD_moments, type = "parameter")
+```
+
+
+Les trois approches montrent des résultats cohérents avec des estimations de paramètres proches. Contrairement à la modélisation par la méthode GEV, le coefficient gamma obtenu à la fois par la méthode du maximum de vraisemblance et par la méthode des L-moments est positif, ce qui suppose que l'ajustement par une loi de Fréchet est le plus adéquat. Cependant, bien que l'incertitude soit moins prononcée qu'avec les ajustements effectués par la méthode GEV, les intervalles de confiance du paramètre de forme incluent zéro, indiquant une possible adéquation avec la distribution de Gumbel.
+
+Les critères AIC et BIC favorisent légèrement le modèle ajusté avec la loi de Gumbel, mais les différences ne sont pas significatives. De plus, les résultats graphiques montrent que le modèle ajusté à partir d'une loi de Gumbel modélise de manière moins satisfaisante les valeurs extrêmes, et qu'à partir d'une certaine période de retour les estimations sont en dehors des intervalles de confiance.
+
+Par conséquent, la méthode GPD semble préconiser l'ajustement par une loi de Fréchet, qui apparaît plus fiable pour modéliser les valeurs extrêmes des chutes de neige. 
+
+Afin de finaliser l'étude de l'estimation des valeurs extrêmes de la chute de neige à Fort Collins, il est proposé d'examiner les valeurs obtenues par les différents ajustements pour plusieurs périodes de retour.
+
+
+```{r estimation de la valeur extrême pour différentes périodes de retour}
+
+# création de variables pour stocker les résultats
+results <- data.frame(
+  Méthode_estimation = character(),
+  Coefficient_gamma = numeric(),
+  Loi_de_réference = character(),
+  Période_de_retour = numeric(),
+  Valeur_estimée = numeric(),
+  stringsAsFactors = FALSE
+)
+
+# ajout d'une fonction pour extraire les valeurs
+ajouter_resultat <- function(methode, gamma, loi_reference, periode, valeur) {
+  gamma <- formatC(gamma, format = "f", flag = " ", digits = 4)  # Formatage du coefficient gamma
+  results <<- rbind(results, data.frame(
+    Méthode_estimation = methode,
+    Coefficient_gamma = gamma,
+    Loi_de_réference = loi_reference,
+    Période_de_retour = periode,
+    Valeur_estimée = valeur
+  ))
+}
+
+
+
+# I. Estimation de la valeur extrême pour différentes périodes de retour, modèles GEV
+gamma_GEV_MLE <- -0.0289  
+gamma_GEV_MLE_Gumbel <- 0  
+gamma_GEV_Lmoments <- -0.0545
+
+return_periods <- c(98, 148, 198, 248)
+for (period in return_periods) {
+  ci_Ajustement <- ci(ajustement_chute_neige_MLE, type = "return.level", return.period = period)
+  ajouter_resultat("GEV (MLE)", gamma_GEV_MLE, "Weibull", period, ci_Ajustement[2]) 
+}
+
+for (period in return_periods) {
+  ci_Ajustement <- ci(ajustement_chute_neige_MLE_Gumbel, type = "return.level", return.period = period)
+  ajouter_resultat("GEV (MLE Gumbel)", gamma_GEV_MLE_Gumbel, "Gumbel", period, ci_Ajustement[2])
+}
+
+for (period in return_periods) {
+  ci_Ajustement <- ci(ajustement_chute_neige_moments, type = "return.level", return.period = period)
+  ajouter_resultat("GEV (L-moments)", gamma_GEV_Lmoments, "Weibull", period, ci_Ajustement[2])
+}
+
+
+
+# II. Estimation de la valeur extrême pour différentes périodes de retour, modèles GPD
+gamma_GPD_MLE <- 0.0521
+gamma_GPD_MLE_Gumbel <- 0
+gamma_GPD_Lmoments <- 0.0744
+
+for (period in return_periods) {
+  ci_Ajustement <- ci(ajustement_chute_neige_GPD_MLE, type = "return.level", return.period = period)
+  ajouter_resultat("GPD (MLE)", gamma_GPD_MLE, "Fréchet", period, ci_Ajustement[2]) 
+}
+
+for (period in return_periods) {
+  ci_Ajustement <- ci(ajustement_chute_neige_GPD_MLE_gumbel, type = "return.level", return.period = period)
+  ajouter_resultat("GPD (MLE Gumbel)", gamma_GPD_MLE_Gumbel, "Gumbel", period, ci_Ajustement[2])
+}
+
+for (period in return_periods) {
+  ci_Ajustement <- ci(ajustement_chute_neige_GPD_moments, type = "return.level", return.period = period)
+  ajouter_resultat("GPD (L-moments)", gamma_GPD_Lmoments, "Fréchet", period, ci_Ajustement[2])
+}
+
+# Suppression de la colonne d'index
+row.names(results) <- NULL
+
+# visualisation des résultats
+knitr::kable(results, format = "html", table.attr = "style='width:100%;'")
+```
+
+
+Les résultats des estimations montrent que les ajustements obtenus par le modèle GEV, avec la méthode du maximum de vraisemblance comme avec celle des L-moments, ont tendance à sous-estimer la hauteur de chute de neige attendue pour une période de retour équivalente à la période observée dans le jeu de donnée. En effet, les estimations obtenues sont inférieures au maximum du jeu de données. 
+Parmi les trois méthodes employées avec le modèle GEV, les estimations obtenues avec l'ajustement par un loi de Gumbel apparaissent être les plus proches cohérentes, bien qu'elles semblent elles aussi légèrement sous-estimées. 
+
+A l'inverse, parmi les estimations obtenues avec le modèle GPD, ce sont celle obtenues avec un ajustement par une loi de Gumbel qui semblent sous-estimer les hauteurs de neige pour une période de retour donnée. Les estimations obtenues avec les méthodes du maximum de vraisemblance et des L-moments semblent cohérentes si l'on se réfère à la période du jeu de données et au maximum observé, bien que l'estimation avec un ajustement par la méthode des L-moments semble surestimer légèrement les hauteurs de neige.
+
+Aussi, parmi les ajustements "GEV (Gumbel)", "GPD (MLE)" et "GPD(L-moments)", ces résultats suggèrent que les estimations obtenues avec un ajustement par un modèle GPD ajusté avec la méthode du maximum de vraisemblance sont les plus fiables. 
+
+Pour s'en assurer, il pourrait être intéressant de procéder à des analyses complémentaires, notamment lors d'un travail conjoint avec des experts du phénomène étudié. En tout état de cause, le modèle "GEV (MLE)", peut-être couplé avec le modèle "GPD (L-moments), semble fournir une base d'estimation fiable.
+
+Ces résultats apparaissent fidèles à ceux présentés dans les graphiques détaillés lords des ajustements, et plutôt cohérents avec les observations relevées lors de l'étude préliminaire de la distribution de la variable. Notamment, nous avons observé que les différents modèles ont oscillés entre des ajustements par des loi de Weibull, de Gumbel et de Fréchet. Ils soulignent cependant l'importance fondamentale d'une modélisation rigoureuse, et celle du choix du seuil, car les différentes méthodes n'ont pas préconisé la même loi d'ajustement et ont procédé à des estimations présentant des différences parfois significatives. Procéder à une estimation respectant les fondements de la théorie des valeurs extrêmes apparaît donc essentielle pour fournir des estimations fiables.
+
+
+
+
+##### I.d. Évaluation de l'espérance conditionnelle des pertes extrêmes (CTE) 
+
+Il est proposé dans cette sous-section d'évaluer l'espérance conditionnelle des pertes extrêmes (CTE). La CTE est une mesure de risque qui représente la moyenne des pertes au-delà d'un certain quantile, conditionnellement à ce que la perte dépasse ce quantile. Cette mesure peut se révéler utile dans l'évaluation des risques extrêmes car elle prend en compte non seulement la probabilité d'occurrence d'événements extrêmes, mais aussi leur gravité au-delàs d'un certain quantile. Elle permet ainsi de compléter efficacement les analyses obtenues par l'ajustement à une loi, et de mieux comprendre et quantifier les risques associés au phénomène étudié en tenant compte des valeurs au-delà de certains quantiles critiques.
+
+Mathématiquement, la CTE pour un niveau de confiance \( \alpha \) est définie comme la moyenne des pertes qui excèdent la Value at Risk (VaR) au niveau \( \alpha \). Soit \( X \) une variable aléatoire représentant les pertes, la CTE est donnée par :
+
+\[ \text{CTE}_\alpha = \mathbb{E}[X \mid X > \text{VaR}_\alpha] \]
+
+où \( \text{VaR}_\alpha \) est le quantile de niveau \( \alpha \) de la distribution des pertes \( X \).
+
+Dans le cas étudié, nous avons établi précédemment que l'ajustement effectué via le modèle GPD avec la méthode du maximum de vraisemblance semblait être celui qui proposait les résultats les plus fiables. Par conséquent, il est proposé de conserver ce modèle pour l'estimation de la CTE pour des périodes de 98, 148, 198 et 248 ans.
+
+
+```{r estimation de la CTE}
+
+# pour un niveau de retour à 98 ans
+CTE_GPD_MLE_98 <- (210.3071) / (1- 0.05214529) + (25.12540454 - 0.05214529*35) / (1 - 0.05214529) 
+cat("CTE estimée de la hauteur de la chute de neige au-delà du quantile estimé pour une période de retour de 98 ans :", CTE_GPD_MLE_98, "\n")
+
+# pour un niveau de retour à 148 ans
+CET_GPD_MLE_148 <- (224.5863) / (1- 0.05214529) + (25.12540454 - 0.05214529*35) / (1 - 0.05214529)
+cat("CTE estimée de la hauteur de la chute de neige au-delà du quantile estimé pour une période de retour de 148 ans :", CET_GPD_MLE_148, "\n")
+
+# pour un niveau de retour à 198 ans
+CET_GPD_MLE_198 <- (234.8543) / (1- 0.05214529) + (25.12540454 - 0.05214529*35) / (1 - 0.05214529)
+cat("CTE estimée de la hauteur de la chute de neige au-delà du quantile estimé pour une période de retour de 198 ans :", CET_GPD_MLE_198, "\n")
+
+# pour un niveau de retour à 248 ans
+CET_GPD_MLE_248 <- (242.9052) / (1- 0.05214529) + (25.12540454 - 0.05214529*35) / (1 - 0.05214529)
+cat("CTE estimée de la hauteur de la chute de neige au-delà du quantile estimé pour une période de retour de 248 ans :", CET_GPD_MLE_248, "\n")
+```
+
+Les estimations obtenues présentent une mesure de l'ampleur que la chute de neige pourrait atteindre lors d'un événement extrême en fonction de la période de retour correspondante. Ces estimations nous permettent de tenir compte de plus d'information pour évaluer l'ampleur des chutes de neige potentielles au-delà des quantiles critiques, fournissant ainsi des informations complémentaires intéressantes pour la compréhension du risque associé.
+
+
+
+
+
+
+
+
+#### II.Étude de deux jeux de données complémentaires
+
+Cette section propose d'étudier deux jeux de données complémentaires qui permettent d'explorer quelques caractéristiques différentes de celles du jeu de données étudié dans la première section.
+
+Afin de ne pas trop alourdir le présent rapport, il est proposé de se focaliser sur les principales caractéristiques de la variable étudiée et des ajustement effectués. En conséquence, l'analyse sera moins détaillée que lors de la première section mais les étapes de raisonnements et la démarche adoptée restent identiques. Certains points complémentaires sont consultables dans le code R. Par commodité, bien que cela allonge un peu la longueur du rapport, les sorties numériques et graphiques des principaux modèles étudiés sont conservés afin de pourvoir s'y référer plus facilement lors de la lecture du rapport.
+
+
+#### II.a Étude du temps maximal auquel un être humain est succeptible de courir au 100 mètres
+
+
+```{r importation du jeu de donné, include=FALSE}
+
+temps100m <- read.csv("~/Formation BDF/EM PD-PSL/Théorie des valeurs extrêmes/Jeux de données/temps100m.csv", sep="")
+summary(temps100m)
+```
+
+
+```{r visualisation de la distribution des temps observés et des vitesses associées, warning=FALSE}
+
+temps <- temps100m [,1]
+
+# données par ordre décroissant
+Time <- sort(temps, decreasing = TRUE)
+
+# visualisation des temps triés
+plot(Time, 
+     ylab = 'Temps (secondes)', 
+     xlab = 'Ordre décroissant des temps', 
+     main = "Temps observés au 100m", 
+     type = 'l', 
+     col.main = "navy", 
+     col.lab = "navy")
+
+# conversion des temps en vitesses
+Speed <- 360 / Time
+summary(Speed)
+
+# préparation des données pour ggplot
+données <- data.frame(Speed)
+données_melt <- melt(données)
+
+# diagramme en boîte des vitesses
+boxplot_vitesses <- ggplot(données_melt, aes(x = variable, y = value, fill = variable)) +
+  geom_boxplot() +
+  labs(title = "Diagramme en boîte des vitesses observées au 100m",
+       x = "Variable",
+       y = "Vitesse (Km/h)") +
+  theme_classic() +
+  theme(
+    plot.title = element_text(hjust = 0.5, color = "navy", size = 12),
+    axis.title.x = element_text(color = "navy", size = 10),
+    axis.title.y = element_text(color = "navy", size = 10)
+  )
+ggplotly(boxplot_vitesses)
+
+# histogramme des vitesses
+histogramme_vitesses <- ggplot(data.frame(Speed), aes(x = Speed)) +
+  geom_histogram(binwidth = 0.1, fill = "burlywood", color = "black", alpha = 0.7) +
+  labs(title = "Histogramme des vitesses observées au 100m",
+       x = "Vitesse (Km/h)",
+       y = "Fréquence") +
+  theme_classic()+
+  theme(
+    plot.title = element_text(color = "navy", hjust = 0.5),
+    axis.title.x = element_text(color = "navy"),
+    axis.title.y = element_text(color = "navy")
+  )
+ggplotly(histogramme_vitesses)
+```
+
+
+Les résumés statistiques montrent une vitesse moyenne de 35,45 km/h, avec une concentration des vitesses atteintes dans un intervalle compris entre 34,93 et 35,74 km/h. Le diagramme en boîte et l'histogramme révèlent un net décrochage à partir de 35,74 km/h, vitesse à partir de laquelle la fréquence observée diminue fortement et continuellement, pour atteindre des valeurs extrêmes. Nous observons en particulier que des vitesses de plus de 37 km/h sont très rarement dépassées. À première vue, il semble donc que le seuil d'estimation des valeurs extrêmes se situe autour d'une vitesse de 35,8 km/h.
+
+Cette distribution apparaît propice à une analyse basée sur les modèles de la théorie des valeurs extrêmes. Le jeu de données étudié n'associe pas de date aux temps mesurés. Ainsi, nous ne pouvons pas effectuer d'ajustement par la méthode d'extraction des maximums sur une période fixée. L'ajustement est dès lors effectué directement avec le modèle GPD.
+
+
+```{r graphiques de la vie résiduelle moyenne et de la plage de seuil des vitesses observées}
+mrlplot(Speed)
+threshrange.plot(Speed, r = c(35.5,36.7), nint = 10)
+```
+
+
+```{r vérification du nombre de données conservées après application du seuil sélectionné}
+
+# seuil sélectionné
+seuil <- 36.1
+
+# filtrage des données pour obtenir celles qui dépassent le seuil
+vitesses_apres_seuil <- Speed[Speed > seuil]
+
+# nombre d'observations après filtrage
+nombre_vitesses_apres_seuil <- length(vitesses_apres_seuil)
+
+# Afficher le nombre d'observations restantes
+print(paste("Nombre d'observations après application du seuil fixé à", seuil, "km/h :", nombre_vitesses_apres_seuil))
+```
+
+
+Le graphique de la vie résiduelle moyenne montre que la courbe semble commencer à ralentir sa décroissance rapide à partir d'un seuil d'environ 35,6, avant de donner l'impression de se stabiliser à partir d'un seuil d'environ 36,1, puis de devenir instable à partir d'un seuil de 36,5. Cela semble indiquer qu'un seuil compris approximativement entre 35,5 et 36,5 serait approprié pour modéliser les valeurs extrêmes.
+
+L'analyse des graphiques présentant les estimations des paramètres d'échelle et de forme pour différents seuils semble confirmer cette impression et suggère que le choix d'un seuil fixé à 36.1 km/h est approprié pour modéliser les valeurs extrêmes des vitesses observées. En effet, les estimations apparaissent relativement stables jusqu'à un seuil de 36 km/h, avant de présenter une première fluctuation significative à un seuil compris entre 36 et 36,2 km/h. Nous observons également que les intervalles de confiance commencent à s'élargir de manière notable et continue à partir de ces seuils. Le seuil de stabilité semble donc se situer entre ces deux valeurs, soit à 36.1 km/h. Ce seuil est également cohérent avec les observations relevées lors de l'analyse préliminaire de la variable, qui montraient une chute notable du nombre d'observations à partir d'un seuil de près de 36 km/h.
+
+L'application de ce seuil permet de conserver 90 observations sur 1 005, ce qui apparaît cohérent.
+
+
+```{r ajustement de la distribution des vitesses_GPD MLE}
+
+ajustement_speed_GPD_MLE <- fevd(
+  Speed, 
+  threshold = 36.1,  
+  type = "GP", 
+  method = "MLE"
+)
+print(ajustement_speed_GPD_MLE)
+
+plot(ajustement_speed_GPD_MLE)
+
+# intervalles de confiance pour les paramètres
+ci(ajustement_speed_GPD_MLE, type = "parameter")
+```
+
+
+```{r ajustement de la distribution des vitesses_GPD MLE_36.4, include=FALSE}
+
+ajustement_speed_GPD_MLE_2 <- fevd(
+  Speed, 
+  threshold = 36.4,  
+  type = "GP", 
+  method = "MLE"
+)
+print(ajustement_speed_GPD_MLE_2)
+
+plot(ajustement_speed_GPD_MLE_2)
+
+# intervalles de confiance pour les paramètres
+ci(ajustement_speed_GPD_MLE_2, type = "parameter")
+```
+
+
+```{r ajustement de la distribution des vitesses_GPD MLE_36.5, include=FALSE}
+
+ajustement_speed_GPD_MLE_3 <- fevd(
+  Speed, 
+  threshold = 36.5,  
+  type = "GP", 
+  method = "MLE"
+)
+print(ajustement_speed_GPD_MLE_3)
+
+plot(ajustement_speed_GPD_MLE_3)
+
+# intervalles de confiance pour les paramètres
+ci(ajustement_speed_GPD_MLE_3, type = "parameter")
+```
+
+
+```{r ajustement de la distribution des vitesses_GPD Gumbel}
+
+ajustement_speed_GPD_MLE_Gumbel <- fevd(
+  Speed, 
+  threshold = 36.1,  
+  type = "Exponential", 
+  method = "MLE"
+)
+
+print(ajustement_speed_GPD_MLE_Gumbel)
+
+plot(ajustement_speed_GPD_MLE_Gumbel)
+
+# intervalles de confiance pour les paramètres
+ci(ajustement_speed_GPD_MLE_Gumbel, type = "parameter")
+```
+
+
+```{r ajustement de la distribution des viteses_GPD l-moment}
+
+ajustement_speed_GPD_Lmoments <- fevd(
+  Speed, 
+  threshold = 36.1,  
+  type = "GP", 
+  method = "Lmoments"
+)
+print(ajustement_speed_GPD_Lmoments)
+
+plot(ajustement_speed_GPD_Lmoments)
+
+# intervalles de confiance pour les paramètres
+ci(ajustement_speed_GPD_Lmoments, type = "parameter")
+```
+
+
+```{r ajustement de la distribution des viteses_GPD l-moment_36.4, include=FALSE}
+
+ajustement_speed_GPD_Lmoments_2 <- fevd(
+  Speed, 
+  threshold = 36.4,  
+  type = "GP", 
+  method = "Lmoments"
+)
+print(ajustement_speed_GPD_Lmoments_2)
+
+plot(ajustement_speed_GPD_Lmoments_2)
+
+# intervalles de confiance pour les paramètres
+ci(ajustement_speed_GPD_Lmoments_2, type = "parameter")
+```
+
+
+```{r ajustement de la distribution des viteses_GPD l-moment_36.5, include=FALSE}
+
+ajustement_speed_GPD_Lmoments_3 <- fevd(
+  Speed, 
+  threshold = 36.5,  
+  type = "GP", 
+  method = "Lmoments"
+)
+print(ajustement_speed_GPD_Lmoments_3)
+
+plot(ajustement_speed_GPD_Lmoments_3)
+
+# intervalles de confiance pour les paramètres
+ci(ajustement_speed_GPD_Lmoments_3, type = "parameter")
+```
+
+
+Les approches par la méthode du maximum de vraisemblance et des moments montrent des résultats cohérents avec des estimations de paramètres relativement proches. Toutes deux concluent à un ajustement par une loi de Weibull, ce qui apparaît cohérent avec le phénomène étudié. En effet, de par sa forme, la loi de Weibull admet une limite finie, et il semble plus raisonnable de considérer que le temps réalisé pour parcourir un 100 mètres par un être humain est limité. Cependant, les intervalles de confiance du paramètre de forme incluent zéro, indiquant une possible adéquation avec la distribution de Gumbel. La comparaison des résultats graphiques montre qu'à seuil équivalent, les valeurs extrêmes semblent modélisées de manière moins satisfaisante et les valeurs de retour sont à l'extrême limite de l'exclusion de l'intervalle de confiance.
+
+À titre de comparaison, des ajustements avec des seuils plus élevés (36,4 et 36,5) ont été effectués. Ces ajustements supposent une modélisation par une loi de Fréchet. Cela semble moins cohérent car, contrairement à la loi de Weibull, cette loi n'admet pas de point terminal. De plus, les résultats graphiques montrent un ajustement moins satisfaisant des valeurs extrêmes avec, notamment, des intervalles de confiance plus grands qu'avec un seuil de 36,1 et une plus grande dispersion des valeurs élevées. En outre, ces ajustements présentent une moins bonne adéquation de la densité estimée avec la densité empirique. Ces comparaisons ne sont pas présentées dans le présent rapport mais sont disponibles dans le code R au besoin.
+
+Par conséquent, la méthode GPD semble préconiser l'ajustement par une loi de Weibull, qui apparaît plus fiable pour modéliser les temps atteignables par un être humain au 100 mètres. Les résultats graphiques supposent que l'ajustement par la méthode des moments est légèrement plus fiable que celui par la méthode du maximum de vraisemblance. 
+
+Afin de finaliser cette étude, il est proposé d'examiner les valeurs estimées par les différents ajustements obtenus avec un seuil fixé à 36,1, pour plusieurs périodes de retour, en ne conservant que les deux modèles ajustés avec une loi de Weibull.
+
+
+```{r estimation de la valeur extrême des vitesses pour différentes périodes de retour, include=FALSE, warning=FALSE}
+
+# création de variables pour stocker les résultats
+results <- data.frame(
+  Méthode_estimation = character(),
+  Coefficient_gamma = numeric(),
+  Loi_de_réference = character(),
+  Période_de_retour = numeric(),
+  Valeur_estimée = numeric(),
+  stringsAsFactors = FALSE
+)
+
+# ajout d'une fonction pour extraire les valeurs
+ajouter_resultat <- function(methode, gamma, loi_reference, periode, valeur) {
+  gamma <- formatC(gamma, format = "f", flag = " ", digits = 4)  # Formatage du coefficient gamma
+  results <<- rbind(results, data.frame(
+    Méthode_estimation = methode,
+    Coefficient_gamma = gamma,
+    Loi_de_réference = loi_reference,
+    Période_de_retour = periode,
+    Valeur_estimée = valeur
+  ))
+}
+
+# estimation de la valeur extrême pour différentes périodes de retour
+return_periods <- c(50, 100, 300)
+
+# coefficients gamma pour chaque méthode
+gamma_GPD_MLE <- -0.01392124 
+gamma_GPD_MLE_Gumbel <- 0
+gamma_GPD_Lmoments <- -0.0429525
+
+# calcul de l'estimation pour la période de retour correspondante
+for (period in return_periods) {
+  ci_Ajustement <- ci(ajustement_speed_GPD_MLE, type = "return.level", return.period = period)
+  ajouter_resultat("GPD (MLE)", gamma_GPD_MLE, "Weibull", period, ci_Ajustement[2]) 
+}
+
+for (period in return_periods) {
+  ci_Ajustement <- ci(ajustement_speed_GPD_MLE_Gumbel, type = "return.level", return.period = period)
+  ajouter_resultat("GPD (MLE Gumbel)", gamma_GPD_MLE_Gumbel, "Gumbel", period, ci_Ajustement[2])
+}
+
+for (period in return_periods) {
+  ci_Ajustement <- ci(ajustement_speed_GPD_Lmoments, type = "return.level", return.period = period)
+  ajouter_resultat("GPD (L-moments)", gamma_GPD_Lmoments, "Weibull", period, ci_Ajustement[2])
+}
+
+# suppression de la colonne d'index
+row.names(results) <- NULL
+
+# visualisation des résultats
+knitr::kable(results, format = "html", table.attr = "style='width:100%;'")
+
+```
+
+
+```{r visualisation des estimations des vitesses extrêmes converties en temps, warning=FALSE}
+
+library(formattable)
+
+# création du tableau des vitesses estimées
+results <- data.frame(
+  Méthode_estimation = c("GPD (MLE)", "GPD (MLE)", "GPD (MLE)",
+                         "GPD (L-moments)", "GPD (L-moments)", "GPD (L-moments)"),
+  Coefficient_gamma = c(-0.0139, -0.0139, -0.0139,
+                        -0.0430, -0.0430, -0.0430),
+  Loi_de_réference = c("Weibull", "Weibull", "Weibull",
+                       "Weibull", "Weibull", "Weibull"),
+  Période_de_retour = c(50, 100, 300,
+                        50, 100, 300),
+  Valeur_estimée = c(37.69470, 37.98894, 38.15612,
+                     37.60325, 37.85174, 37.98907)
+)
+
+# ajout d'une colonne pour les temps estimés en utilisant la formule de conversion
+results$Temps_estimé <- 360 / results$Valeur_estimée
+
+# tableau des résultats
+knitr::kable(results, format = "html", table.attr = "style='width:100%;'")
+```
+
+
+Les estimations des temps au 100 mètres obtenues apparaissent plus optimistes lorsqu'elles sont modélisées avec la méthode du maximum de vraisemblance, ce qui apparaît cohérent avec les résultats graphiques. Ces ajustements montrent que le record actuel pourrait être battu d'ici 50 ans. Ils montrent également qu'il est théoriquement possible de passer sous la barre des 9 secondes et 50 centièmes d'ici 100 ans. L'évolution plutôt progressive du temps atteignable sur une période de temps très longue semble conforter la fiabilité de ces modèles. Il serait toutefois intéressant de recueillir l'avis de spécialistes pour discuter plus en avant de ces résultats.
+
+
+```{r calcul des points terminaux}
+
+# I. Pour l'ajustement GDP_MLE
+mu <- 36.1
+sigma <- 0.26864779   
+xi <- -0.0139   
+
+vitesse_point_terminal_1 <- mu - (sigma / xi)
+temps_vitesse_point_terminal_1 <- 360 / vitesse_point_terminal_1
+
+cat("Valeur estimée du point terminal de la fonction de distribution pour l'ajustement du temps au 100m par le modèle GPD_MLE :", vitesse_point_terminal_1, "\n")
+cat("Temps au 100m associé :", temps_vitesse_point_terminal_1, "\n")
+
+
+# II. Pour l'ajustement GDP_Lmoments
+mu_2 <- 36.1
+sigma_2 <- 0.2763419   
+xi_2 <- -0.0430
+
+vitesse_point_terminal_2 <- mu_2 - (sigma_2 / xi_2)
+temps_vitesse_point_terminal_2 <- 360 / vitesse_point_terminal_2
+
+cat("Valeur estimée du point terminal de la fonction de distribution pour l'ajustement du temps au 100m par le modèle GPD_Lmoments :", vitesse_point_terminal_2, "\n")
+cat("Temps au 100m associé :", temps_vitesse_point_terminal_2, "\n")
+
+```
+
+
+Le calcul des points terminaux de la fonction de Weibull confirme les constats émis précédemment. Le temps atteignable selon l'estimation du modèle GPD-MLE est théoriquement beaucoup plus rapide que celui obtenu selon le modèle GPD-Lmoments. La légère différence observée lors de l'analyse des résultats graphiques se confirme et n'est pas négligeable. Ce constat semble renforcer l'hypothèse selon laquelle le modèle GPD-Lmoments modélise de manière plus satisfaisante les temps atteignables au 100 mètres. Cette modélisation plus prudente est probablement plus réaliste, étant donné les contraintes physiologiques et les limites humaines. Cela conforte également l'idée de recueillir l'avis de spécialistes et de médecins pour discuter plus en avant de ces résultats, afin de mieux cerner ce qui est théoriquement possible pour ce genre de performance.
+
+
+#### II.b. Étude sur les valeurs extrêmes des éruptions solaires
+
+Il est proposé dans cette sous-section d'étudier les valeurs extrêmes des éruptions solaires. Les éruptions solaires ont des explosions soudaines de l'énergie magnétique accumulée dans l'atmosphère solaire et peuvent avoir des impacts significatifs sur la Terre, notamment sur les systèmes de communication, les réseaux électriques et les satellites. Ainsi, comprendre les valeurs extrêmes que peuvent atteindre ces éruptions est important pour évaluer les risques et préparer des mesures de protection appropriées.
+
+Les données utilisées dans cette analyse proviennent d'un jeu de données disponible sur Kaggle, référencé dans le document de référence [6]. Les données de l'indice des éruptions utilisées dans cette étude ont été calculées par T. Atac et A. Ozguc de l'Observatoire de Kandilli de l'Université de Bogazici, Istanbul, Turquie.
+
+
+```{r importation du jeu de données sur les éruptions solaires}
+éruptions_solaires <- read.csv("~/Formation BDF/EM PD-PSL/Théorie des valeurs extrêmes/Jeux de données/flaresdata.csv")
+View(éruptions_solaires)
+```
+
+
+```{r étude préalable de la variable "indice_éruption"}
+
+summary(éruptions_solaires)
+
+# diagramme en boîte
+diagramme_boîte_éruption_solaire <- ggplot(éruptions_solaires, aes(x = "", y = sfindex)) + 
+  geom_boxplot(fill = "skyblue") +
+  labs(title = "Diagramme en boîte des éruptions solaires", y = "Indice des éruptions solaires") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, color = "navy"))
+ggplotly(diagramme_boîte_éruption_solaire)
+
+# histogramme
+histogramme_éruptions_solaires <- ggplot(éruptions_solaires, aes(x = sfindex)) + 
+  geom_histogram(binwidth = 1, fill = "burlywood", color = "black", alpha = 0.7) +
+  labs(title = "Histogramme des éruptions solaires", x = "Indice des éruptions solaires", y = "Fréquence") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, color = "navy"))
+ggplotly(histogramme_éruptions_solaires)
+```
+
+
+Les résumés statistiques montrent un indice d'éruption moyen de 4,809, avec une concentration des indices atteints par les éruptions solaires dans un intervalle compris entre 0 et 6. Le diagramme en boîte et l'histogramme révèlent un net décrochage à partir des indices valant approximativement 18, seuil à partir duquel la fréquence observée diminue fortement et continuellement, pour atteindre des valeurs extrêmes. Nous observons en particulier que des indices supérieurs à 35 sont très rarement dépassés. À première vue, il semble donc que le seuil d'estimation des valeurs extrêmes se situe aux alentours d'un indice de 25.
+
+Cette distribution apparaît propice à une analyse basée sur les modèles de la théorie des valeurs extrêmes. Notons toutefois que les indices dépassent extrêmement rarement la valeur de 112, et que dans les très rares cas où cela s'est produit, il y a un saut important entre les valeurs des indices. Ceci pourrait perturber quelque peu la modélisation des valeurs extrêmes.
+ 
+Le jeu de données étudié associe une date journalière aux indices mesurés, ce qui permet d'appliquer des ajustements par les modèles GEV et GPD.
+
+
+```{r mise en forme de jeu de données sur les éruptions solaires pour analyse, include=FALSE}
+
+# création d'un DataFrame
+éruptions_extrêmes <- data.frame(time = seq(as.Date("1976-01-01"), by = "days", length.out = nrow(éruptions_solaires)), éruptions_extrêmes = éruptions_solaires$sfindex)
+
+# ajout de la colonne Year extraite de la colonne time
+éruptions_extrêmes <- éruptions_extrêmes %>%
+  mutate(year = as.integer(format(time, "%Y")))%>%
+  rename(date = time, année = year)
+
+# vérification des premières lignes après modification
+head(éruptions_extrêmes)
+
+# vérification de la présence de valeurs manquantes
+summary(éruptions_extrêmes)
+colSums(is.na(éruptions_extrêmes))
+```
+
+
+
+```{r extraction des éruptions solaires maximales annuelles, include=FALSE}
+
+max_annuel_éruptions <- blockmaxxer(éruptions_extrêmes, blocks = éruptions_extrêmes$année, which = "éruptions_extrêmes")
+head(max_annuel_éruptions)
+
+# nombre d'observations dans le résultat de blockmaxxer
+nombre_donnees_blockmaxxer <- nrow(max_annuel_éruptions)
+print(paste("Nombre total d'observations après application de blockmaxxer :", nombre_donnees_blockmaxxer))
+
+# graphique
+plot(
+  éruptions_extrêmes$année,
+  éruptions_extrêmes$éruptions_extrêmes,
+  ylab = "",  
+  xlab = "",  
+  col = "Navy", 
+  pch = 16, 
+  main = "Valeur maximale des éruptions journalières pour chaque année",
+  xaxt = "n",  
+  yaxt = "n"  
+)
+# ajout d'une échelle des années à l'axe des abscisses
+axis(
+  1, 
+  at = seq(min(éruptions_extrêmes$année), max(éruptions_extrêmes$année), by = 5),
+  labels = seq(min(éruptions_extrêmes$année), max(éruptions_extrêmes$année), by = 5),
+  las = 1 
+)
+# ajout d'une chelle des valeurs des éruptions à l'axe des ordonnées
+axis(2, at = pretty(éruptions_extrêmes$éruptions_extrêmes))
+# ajout des points des valeurs maximales annuelles
+points(max_annuel_éruptions$année, max_annuel_éruptions$éruptions_extrêmes, col = "firebrick2", pch = 16)
+# ajout des titres et personnalisation les couleurs
+title(main = "Valeur maximale des éruptions journalières pour chaque année", col.main = "Navy")
+mtext(side = 1, text = "Années", line = 2, col = "Navy")
+mtext(side = 2, text = "Éruption maximale", line = 2, col = "Navy")
+```
+
+
+```{r ajustement de la distribution des éruptions solaires avec la méthode GEV_MLE}
+
+ajustement_éruptions_extrêmes_MLE <- fevd(max_annuel_éruptions$éruptions_extrêmes, type = "GEV", method = "MLE")
+print(ajustement_éruptions_extrêmes_MLE)
+
+plot(ajustement_éruptions_extrêmes_MLE)
+
+# intervalles de confiance pour les paramètres
+ci(ajustement_éruptions_extrêmes_MLE, type = "parameter")
+```
+
+
+```{r ajustement de la distribution éruptions solaires avec la méthode MLE_Gumbel, include=FALSE}
+
+ajustement_éruptions_extrêmes_MLE_Gumbel <- fevd(max_annuel_éruptions$éruptions_extrêmes, type = "Gumbel", method = "MLE")
+print(ajustement_éruptions_extrêmes_MLE_Gumbel)
+
+plot(ajustement_éruptions_extrêmes_MLE_Gumbel)
+
+# intervalles de confiance pour les paramètres
+ci(ajustement_éruptions_extrêmes_MLE_Gumbel, type = "parameter")
+```
+
+
+```{r ajustement de la distribution éruptions solaires avec la méthode Lmoments}
+
+ajustement_éruptions_extrêmes_Lmoments <- fevd(max_annuel_éruptions$éruptions_extrêmes, type = "GEV", method = "Lmoments")
+print(ajustement_éruptions_extrêmes_Lmoments)
+
+plot(ajustement_éruptions_extrêmes_Lmoments)
+
+# intervalles de confiance pour les paramètres
+ci(ajustement_éruptions_extrêmes_Lmoments, type = "parameter")
+```
+
+
+```{r graphiques de la vie résiduelle moyenne et de la plage de seuil des érusptions solaires observées}
+mrlplot(éruptions_solaires$sfindex)
+threshrange.plot(éruptions_solaires$sfindex, r = c(20,70), nint = 10)
+```
+
+
+```{r vérification du nombre éruptions_solaires conservées après application du seuil sélectionné}
+
+seuil <- 40
+
+# filtrage des données pour obtenir celles qui dépassent le seuil
+éruptions_après_seuil <- éruptions_solaires[éruptions_solaires$sfindex > seuil, ]
+
+# nombre d'observations après filtrage
+nombre_éruptions_après_seuil <- nrow(éruptions_après_seuil)
+
+# nombre d'observations restantes
+print(paste("Nombre d'observations après application du seuil de", seuil, ":", nombre_éruptions_après_seuil))
+```
+
+
+Le graphique de la vie résiduelle moyenne montre que la courbe semble croître à partir d'un seuil d'environ 20, avant de donner l'impression de se stabiliser à partir d'un seuil d'environ 65, puis de devenir instable à partir d'un seuil de 80. Cela semble indiquer qu'un seuil compris approximativement entre 30 et 45 serait approprié pour modéliser les valeurs extrêmes.
+
+L'analyse des graphiques présentant les estimations des paramètres d'échelle et de forme pour différents seuils semble confirmer cette impression et suggère que le choix d'un seuil fixé à 40 est approprié pour modéliser les valeurs extrêmes des éruptions observées. En effet, les estimations apparaissent relativement stables jusqu'à un seuil de 38, avant de présenter une première fluctuation significative à un seuil compris entre 38 et 42. Nous observons également que les intervalles de confiance commencent à s'élargir de manière notable et continue à partir de ces seuils. Le seuil de stabilité semble donc se situer entre ces deux valeurs, soit à 40. Ce seuil est également cohérent avec les observations relevées lors de l'analyse préliminaire de la variable, qui montraient que les indice d'environ 35 étaient rarement dépassés.
+
+L'application de ce seuil permet de conserver 163 observations sur 17 085, ce qui apparaît peu mais cohérent. Ce seuil permet également de conserver environ 3,5 fois plus de maximums annuels.
+
+
+```{r ajustement de la distribution des éruptions solaires avec GPD_MLE}
+
+ajustement_érusptions_solaires_extrêmes_GPD_MLE <- fevd(
+  éruptions_solaires$sfindex, 
+  threshold = 40,  
+  type = "GP", 
+  method = "MLE", 
+  time.units = "days"
+)
+print(ajustement_érusptions_solaires_extrêmes_GPD_MLE)
+
+plot(ajustement_érusptions_solaires_extrêmes_GPD_MLE)
+
+# intervalles de confiance pour les paramètres
+ci(ajustement_érusptions_solaires_extrêmes_GPD_MLE, type = "parameter")
+```
+
+
+```{r ajustement de la distribution des éruptions solaires avec GPD_MLE_25, include=FALSE}
+
+ajustement_érusptions_solaires_extrêmes_GPD_MLE_25 <- fevd(
+  éruptions_solaires$sfindex, 
+  threshold = 25,  
+  type = "GP", 
+  method = "MLE", 
+  time.units = "days"
+)
+print(ajustement_érusptions_solaires_extrêmes_GPD_MLE_25)
+
+plot(ajustement_érusptions_solaires_extrêmes_GPD_MLE_25)
+
+# intervalles de confiance pour les paramètres
+ci(ajustement_érusptions_solaires_extrêmes_GPD_MLE_25, type = "parameter")
+```
+
+
+```{r ajustement de la distribution des éruptions solaires avec GPD_Lmoments}
+
+ajustement_éruptions_solaires_extrêmes_GPD_Lmoments <- fevd(
+  éruptions_solaires$sfindex, 
+  threshold = 40,  
+  type = "GP", 
+  method = "Lmoments", 
+  time.units = "days"
+)
+print(ajustement_éruptions_solaires_extrêmes_GPD_Lmoments)
+
+plot(ajustement_éruptions_solaires_extrêmes_GPD_Lmoments)
+
+# intervalles de confiance pour les paramètres
+ci(ajustement_éruptions_solaires_extrêmes_GPD_Lmoments, type = "parameter")
+```
+
+
+```{r ajustement de la distribution des éruptions solaires avec GPD_Lmoments_25, include=FALSE}
+
+ajustement_éruptions_solaires_extrêmes_GPD_Lmoments_25 <- fevd(
+  éruptions_solaires$sfindex, 
+  threshold = 25,  
+  type = "GP", 
+  method = "Lmoments", 
+  time.units = "days"
+)
+print(ajustement_éruptions_solaires_extrêmes_GPD_Lmoments_25)
+
+plot(ajustement_éruptions_solaires_extrêmes_GPD_Lmoments_25)
+
+# intervalles de confiance pour les paramètres
+ci(ajustement_éruptions_solaires_extrêmes_GPD_Lmoments_25, type = "parameter")
+```
+
+
+
+```{r estimation de la valeur extrême des éruptions solaires pour différentes périodes de retour, warning=FALSE}
+
+# création de variables pour stocker les résultats
+results <- data.frame(
+  Méthode_estimation = character(),
+  Coefficient_gamma = numeric(),
+  Loi_de_réference = character(),
+  Période_de_retour = numeric(),
+  Valeur_estimée = numeric(),
+  stringsAsFactors = FALSE
+)
+
+# ajout d'une fonction pour extraire les valeurs
+ajouter_resultat <- function(methode, gamma, loi_reference, periode, valeur) {
+  gamma <- formatC(gamma, format = "f", flag = " ", digits = 4)  # Formatage du coefficient gamma
+  results <<- rbind(results, data.frame(
+    Méthode_estimation = methode,
+    Coefficient_gamma = gamma,
+    Loi_de_réference = loi_reference,
+    Période_de_retour = periode,
+    Valeur_estimée = valeur
+  ))
+}
+
+# estimation de la valeur extrême pour différentes périodes de retour
+return_periods <- c(100, 150, 200)
+
+
+
+# I. Estimation de la valeur extrême pour différentes périodes de retour, modèles GEV
+gamma_GEV_MLE <- 0.1143407   
+gamma_GEV_Lmoments <- 0.1348389 
+
+for (period in return_periods) {
+  ci_Ajustement <- ci(ajustement_éruptions_extrêmes_MLE, type = "return.level", return.period = period)
+  ajouter_resultat("GEV (MLE)", gamma_GEV_MLE, "Fréchet", period, ci_Ajustement[2]) 
+}
+
+for (period in return_periods) {
+  ci_Ajustement <- ci(ajustement_éruptions_extrêmes_Lmoments, type = "return.level", return.period = period)
+  ajouter_resultat("GEV (L-moments)", gamma_GEV_Lmoments, "Fréchet", period, ci_Ajustement[2])
+}
+
+
+
+# II. Estimation de la valeur extrême pour différentes périodes de retour, modèles GPD
+gamma_GPD_MLE <- 0.2448181          
+gamma_GPD_Lmoments <- 0.2512008         
+
+for (period in return_periods) {
+  ci_Ajustement <- ci(ajustement_érusptions_solaires_extrêmes_GPD_MLE, type = "return.level", return.period = period)
+  ajouter_resultat("GPD (MLE)", gamma_GPD_MLE, "Fréchet", period, ci_Ajustement[2]) 
+}
+
+
+for (period in return_periods) {
+  ci_Ajustement <- ci(ajustement_éruptions_solaires_extrêmes_GPD_Lmoments, type = "return.level", return.period = period)
+  ajouter_resultat("GPD (L-moments)", gamma_GPD_Lmoments, "Fréchet", period, ci_Ajustement[2])
+}
+
+# Suppression de la colonne d'index
+row.names(results) <- NULL
+
+# visualisation des résultats
+knitr::kable(results, format = "html", table.attr = "style='width:100%;'")
+```
+
+
+Les approches par la modélisation GEV montrent des résultats cohérents avec des estimations de paramètres relativement proches entre la méthode du maximum de vraisemblance et celle des moments. Toutes deux concluent à un ajustement par une loi de Fréchet. Cependant, bien qu'à la vue des coefficients gamma estimés cela apparaisse peu probable, les intervalles de confiance du paramètre de forme incluent zéro, indiquant une possible adéquation avec la distribution de Gumbel. La comparaison des résultats graphiques montre qu'à seuil équivalent, les valeurs extrêmes semblent modélisées de manière moins satisfaisante et les valeurs de retour sont en dehors de l'intervalle de confiance à partir d'un certain rang. Les résultats graphiques semblent montrer que l'ajustement par la méthode des L-moments est légèrement plus adapté.
+
+Les estimations de paramètres obtenues par le modèle GPD sont également cohérentes entre les deux méthodes, avec des estimations très proches.
+
+Contrairement aux observations effectuées, notamment, lors de l'analyse du volume de neige, chacun des modèles conclut dans le présent cas à la même loi avec peu d'incertitude.
+
+À titre de comparaison, des ajustements avec des seuils différents ont été effectués sans qu'ils ne remettent en cause la qualité des ajustements effectués au seuil fixé à un indice de 40.
+
+Les valeurs estimées aux périodes de retour définies ci-dessus montrent que celles estimées par le modèle "GEV-MLE" sous-estiment les valeurs extrêmes. En effet, alors que la période de retour la plus éloignée est pourtant quatre fois plus grande que la taille de l'échantillon, toutes les valeurs estimées sont plus faibles que la valeur maximale observée dans le jeu de données étudié. Les valeurs estimées par le modèle "GEV-Lmoments" apparaissent plus cohérentes, et plus proches de celles estimées par les modèles GPD. Ce constat illustre la difficulté de l'estimation par la méthode des moments lorsque l'échantillon analysé est petit - il contient ici 47 maximums annuels -, alors que l'estimation par la méthode des L-moments est plus appropriée dans ce cas.
+
+L'analyse graphique des résultats montre également que, bien que les ajustements apparaissent satisfaisants, les modèles ajustés conservent une certaine difficulté à modéliser les valeurs très extrêmes. Nous retrouvons ici la problématique soulevée lors de l'analyse préalable de la variable étudiée concernant les rares observations nettement supérieures aux autres.
+
+Comme pour les précédents cas, il serait intéressant de recueillir l'avis de spécialistes afin de mieux cerner ce qui est théoriquement possible pour ce genre de phénomène. Notamment en ce qui concerne les valeurs très extrêmes observées, afin de savoir si d'autres de cette intensité ont déjà été observées à d'autres périodes et pouvoir ainsi affiner les ajustements.
+
+
+
+
+#### Références documentaires
+
+[1] Emily Mashak, _The Biggest Fort Collins Snowfalls in History_, publié le 22 février 2022, https://townsquarenoco.com/history-of-fort-collins-snowfalls/
+
+[2] Miles Blumhardt, _Colorado's much-anticipated snowstorm finally here and it's packing a punch_, non daté, https://eu.coloradoan.com/story/news/2021/03/13/fort-collins-weather-colorado-snowstorm-finally-here/4681719001/
+
+[3] _Remember Colorado's March 2003 blizzard?_, Coloradoan, publié le 11 mars 2021, https://eu.coloradoan.com/picture-gallery/news/local/fort-collins/2021/03/09/colorado-weather-march-2003-blizzard/6922988002/
+
+[4] _March 13-14, 2021 Northeast Colorado Blizzard_, National Weather Service, https://www.weather.gov/bou/March13_14_2021NortheastColoradoBlizzard
+
+[5] LaCroix, AFP, _Grâce aux neiges du Colorado, l'Ouest américain espère un bref répit à sa sécheresse_, publié le 12 avril 2023, https://www.la-croix.com/Grace-neiges-Colorado-Ouest-americain-espere-bref-repit-secheresse-2023-04-12-1301263018
+
+[6] _Solar Flare Index_, "Les données de l'indice des éruptions utilisées dans cette étude ont été calculées par T. Atac et A. Ozguc de l'Observatoire de Kandilli de l'Université de Bogazici, Istanbul, Turquie." Site Web : http://www.koeri.boun.edu.tr/eng/topeng.htm, Kaggle, lien internet : https://www.kaggle.com/datasets/tavoglc/solar-flare-index
